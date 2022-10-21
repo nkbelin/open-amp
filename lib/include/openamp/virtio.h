@@ -115,6 +115,8 @@ struct virtio_vring_info {
  * applications/drivers
  */
 
+#define NK_SOCKETS 1
+
 struct virtio_device {
 	uint32_t notifyid; /**< unique position on the virtio bus */
 	struct virtio_device_id id; /**< the device type identification
@@ -125,8 +127,16 @@ struct virtio_device {
 	virtio_dev_reset_cb reset_cb; /**< user registered device callback */
 	const struct virtio_dispatch *func; /**< Virtio dispatch table */
 	void *priv; /**< TODO: remove pointer to virtio_device private data */
+#ifdef NK_SOCKETS
+	int fd; /* socket file descriptor */
+	void *buf; /* internal buffer used with the sockets */
+	void *payload; /* pointor on the actual payload of the internal buffer */
+	int len; /* length of the internal buffer */
+	void (*rx_callback)(struct virtio_device *vdev); /* callback directly in the structure */
+#else /*NK_SOCKETS*/
 	unsigned int vrings_num; /**< number of vrings */
 	struct virtio_vring_info *vrings_info;
+#endif /*NK_SOCKETS*/
 };
 
 /*
@@ -161,7 +171,11 @@ struct virtio_dispatch {
 	void (*write_config)(struct virtio_device *dev, uint32_t offset,
 			     void *src, int length);
 	void (*reset_device)(struct virtio_device *dev);
+#ifdef NK_SOCKETS
+	int (*notify)(struct virtio_device *vdev);
+#else /*NK_SOCKETS*/
 	void (*notify)(struct virtqueue *vq);
+#endif /*NK_SOCKETS*/
 };
 
 int virtio_create_virtqueues(struct virtio_device *vdev, unsigned int flags,

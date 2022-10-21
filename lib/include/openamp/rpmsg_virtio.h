@@ -73,10 +73,12 @@ struct rpmsg_virtio_device {
 	struct rpmsg_device rdev;
 	struct rpmsg_virtio_config config;
 	struct virtio_device *vdev;
+#ifndef NK_SOCKETS
 	struct virtqueue *rvq;
 	struct virtqueue *svq;
-	struct metal_io_region *shbuf_io;
 	struct rpmsg_virtio_shm_pool *shpool;
+#endif /*NK_SOCKETS*/
+	struct metal_io_region *shbuf_io;
 	struct metal_list reclaimer;
 };
 
@@ -109,6 +111,12 @@ static inline void rpmsg_virtio_set_status(struct rpmsg_virtio_device *rvdev,
 {
 	rvdev->vdev->func->set_status(rvdev->vdev, status);
 }
+
+static inline int rpmsg_virtio_notify(struct rpmsg_virtio_device *rvdev)
+{
+	return rvdev->vdev->func->notify(rvdev->vdev);
+}
+
 
 static inline uint8_t rpmsg_virtio_get_status(struct rpmsg_virtio_device *rvdev)
 {
