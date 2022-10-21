@@ -911,7 +911,9 @@ remoteproc_create_virtio(struct remoteproc *rproc,
 	struct remoteproc_virtio *rpvdev;
 	size_t vdev_rsc_offset;
 	unsigned int notifyid;
+#ifndef NK_SOCKETS
 	unsigned int num_vrings, i;
+#endif
 	struct metal_list *node;
 
 #ifdef VIRTIO_DRIVER_ONLY
@@ -958,6 +960,7 @@ remoteproc_create_virtio(struct remoteproc *rproc,
 
 	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
 	metal_list_add_tail(&rproc->vdevs, &rpvdev->node);
+#ifndef NK_SOCKETS
 	num_vrings = vdev_rsc->num_of_vrings;
 
 	/* set the notification id for vrings */
@@ -984,6 +987,7 @@ remoteproc_create_virtio(struct remoteproc *rproc,
 		if (ret)
 			goto err1;
 	}
+#endif
 	metal_mutex_release(&rproc->lock);
 	return vdev;
 

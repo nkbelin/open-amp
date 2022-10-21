@@ -83,6 +83,7 @@ void virtio_describe(struct virtio_device *dev, const char *msg,
 	virtio_feature_name(0, desc);
 }
 
+#ifndef NK_SOCKETS
 int virtio_create_virtqueues(struct virtio_device *vdev, unsigned int flags,
 			     unsigned int nvqs, const char *names[],
 			     vq_callback callbacks[])
@@ -122,3 +123,4 @@ int virtio_create_virtqueues(struct virtio_device *vdev, unsigned int flags,
 	return 0;
 }
 
+#endif /*NK_SOCKETS*/

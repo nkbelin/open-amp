@@ -16,6 +16,103 @@
 #include <metal/utilities.h>
 #include <metal/alloc.h>
 
+#ifdef NK_SOCKETS
+
+/* Big copy paste of the functions found in the linuc platform info */
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#define UNIX_PREFIX "unix:"
+#define UNIXS_PREFIX "unixs:"
+
+
+static int sk_unix_client(const char *descr)
+{
+	struct sockaddr_un addr;
+	int fd;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+
+	memset(&addr, 0, sizeof addr);
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, descr + strlen(UNIX_PREFIX),
+		sizeof addr.sun_path);
+	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) >= 0) {
+		printf("connected to %s\r\n", descr + strlen(UNIX_PREFIX));
+		return fd;
+	}
+
+	close(fd);
+	return -1;
+}
+
+static int sk_unix_server(const char *descr)
+{
+	struct sockaddr_un addr;
+	int fd, nfd;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, descr + strlen(UNIXS_PREFIX),
+		sizeof addr.sun_path);
+	unlink(addr.sun_path);
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		goto fail;
+	}
+
+	listen(fd, 5);
+	printf("Waiting for connection on %s\r\n", addr.sun_path);
+	nfd = accept(fd, NULL, NULL);
+	close(fd);
+	return nfd;
+fail:
+	close(fd);
+	return -1;
+}
+
+static inline int is_sk_unix_server(const char *descr)
+{
+	if (memcmp(UNIXS_PREFIX, descr, strlen(UNIXS_PREFIX)))
+		return 0;
+	else
+		return 1;
+}
+
+static int event_open(const char *descr)
+{
+	int fd = -1;
+	int i;
+
+	if (descr == NULL) {
+		return fd;
+	}
+
+	if (!is_sk_unix_server(descr)) {
+		/* UNIX client.  Retry to connect a few times to give the peer
+		 *  a chance to setup.  */
+		for (i = 0; i < 100 && fd == -1; i++) {
+			fd = sk_unix_client(descr);
+			if (fd == -1)
+				usleep(i * 10 * 1000);
+		}
+	} else {
+		/* UNIX server. */
+		fd = sk_unix_server(descr);
+	}
+	printf("Open IPI: %s\r\n", descr);
+	return fd;
+}
+
+
+int vdev_notify(struct virtio_device *vdev)
+{
+	struct remoteproc_virtio *rpvdev;
+	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
+	return rpvdev->notify(rpvdev->priv, vdev->notifyid);
+}
+
+#else /*NK_SOCKETS*/
 static void rproc_virtio_virtqueue_notify(struct virtqueue *vq)
 {
 	struct remoteproc_virtio *rpvdev;
@@ -29,6 +126,7 @@ static void rproc_virtio_virtqueue_notify(struct virtqueue *vq)
 	vring_info = &vdev->vrings_info[vq_id];
 	rpvdev->notify(rpvdev->priv, vring_info->notifyid);
 }
+#endif /*NK_SOCKETS*/
 
 static unsigned char rproc_virtio_get_status(struct virtio_device *vdev)
 {
@@ -128,6 +226,9 @@ static uint32_t rproc_virtio_negotiate_features(struct virtio_device *vdev,
 static void rproc_virtio_read_config(struct virtio_device *vdev,
 				     uint32_t offset, void *dst, int length)
 {
+#ifdef NK_SOCKETS
+	printf("CHECK :( entering rproc_virtio_read_config");
+#else /*NK_SOCKETS*/
 	struct remoteproc_virtio *rpvdev;
 	struct fw_rsc_vdev *vdev_rsc;
 	struct metal_io_region *io;
@@ -142,12 +243,16 @@ static void rproc_virtio_read_config(struct virtio_device *vdev,
 		metal_io_block_read(io,
 				metal_io_virt_to_offset(io, config + offset),
 				dst, length);
+#endif /*NK_SOCKETS*/
 }
 
 #ifndef VIRTIO_DEVICE_ONLY
 static void rproc_virtio_write_config(struct virtio_device *vdev,
 				      uint32_t offset, void *src, int length)
 {
+#ifdef NK_SOCKETS
+	printf("CHECK :( entering rproc_virtio_write_config");
+#else /*NK_SOCKETS*/
 	struct remoteproc_virtio *rpvdev;
 	struct fw_rsc_vdev *vdev_rsc;
 	struct metal_io_region *io;
@@ -164,6 +269,7 @@ static void rproc_virtio_write_config(struct virtio_device *vdev,
 				src, length);
 		rpvdev->notify(rpvdev->priv, vdev->notifyid);
 	}
+#endif /*NK_SOCKETS*/
 }
 
 static void rproc_virtio_reset_device(struct virtio_device *vdev)
@@ -178,7 +284,12 @@ static const struct virtio_dispatch remoteproc_virtio_dispatch_funcs = {
 	.get_status = rproc_virtio_get_status,
 	.get_features = rproc_virtio_get_features,
 	.read_config = rproc_virtio_read_config,
+#ifdef NK_SOCKETS
+	.notify = vdev_notify,
+#else
 	.notify = rproc_virtio_virtqueue_notify,
+#endif /*NK_SOCKETS*/
+
 #ifndef VIRTIO_DEVICE_ONLY
 	/*
 	 * We suppose here that the vdev is in a shared memory so that can
@@ -200,6 +311,48 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 			 rpvdev_notify_func notify,
 			 virtio_dev_reset_cb rst_cb)
 {
+#ifdef NK_SOCKETS
+	struct remoteproc_virtio *rpvdev;
+	struct fw_rsc_vdev *vdev_rsc = rsc;
+	struct virtio_device *vdev;
+
+	rpvdev = metal_allocate_memory(sizeof(*rpvdev));
+	if (!rpvdev)
+		return NULL;
+	memset(rpvdev, 0, sizeof(*rpvdev));
+	vdev = &rpvdev->vdev;
+
+	rpvdev->notify = notify;
+	rpvdev->priv = priv;
+
+
+	rpvdev->vdev_rsc = vdev_rsc;
+	rpvdev->vdev_rsc_io = rsc_io;
+
+	vdev->notifyid = notifyid;
+	vdev->role = role;
+	vdev->reset_cb = rst_cb;
+	vdev->func = &remoteproc_virtio_dispatch_funcs;
+	const char *host_descr = "unixs:/tmp/openamp.nk.0";
+	const char *remote_descr = "unix:/tmp/openamp.nk.0";
+	if (role == VIRTIO_DEV_DEVICE) {
+		vdev->fd = event_open(remote_descr);
+	}
+	if (role == VIRTIO_DEV_DRIVER) {
+		vdev->fd = event_open(host_descr);
+	}
+
+#ifndef VIRTIO_DEVICE_ONLY
+	if (role == VIRTIO_DEV_DRIVER) {
+		uint32_t dfeatures = rproc_virtio_get_dfeatures(vdev);
+		/* Assume the virtio driver support all remote features */
+		rproc_virtio_negotiate_features(vdev, dfeatures);
+	}
+#endif
+
+	return &rpvdev->vdev;
+
+#else /*NK_SOCKETS*/
 	struct remoteproc_virtio *rpvdev;
 	struct virtio_vring_info *vrings_info;
 	struct fw_rsc_vdev *vdev_rsc = rsc;
@@ -268,6 +421,7 @@ err1:
 err0:
 	metal_free_memory(rpvdev);
 	return NULL;
+#endif /*NK_SOCKETS*/
 }
 
 void rproc_virtio_remove_vdev(struct virtio_device *vdev)
@@ -278,6 +432,7 @@ void rproc_virtio_remove_vdev(struct virtio_device *vdev)
 	if (!vdev)
 		return;
 	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
+#ifndef NK_SOCKETS
 	for (i = 0; i < vdev->vrings_num; i++) {
 		struct virtqueue *vq;
 
@@ -287,9 +442,11 @@ void rproc_virtio_remove_vdev(struct virtio_device *vdev)
 	}
 	if (vdev->vrings_info)
 		metal_free_memory(vdev->vrings_info);
+#endif /*NK_SOCKETS*/
 	metal_free_memory(rpvdev);
 }
 
+#ifndef NK_SOCKETS
 int rproc_virtio_init_vring(struct virtio_device *vdev, unsigned int index,
 			    unsigned int notifyid, void *va,
 			    struct metal_io_region *io,
@@ -310,18 +467,24 @@ int rproc_virtio_init_vring(struct virtio_device *vdev, unsigned int index,
 
 	return 0;
 }
+#endif /*NK_SOCKETS*/
 
 int rproc_virtio_notified(struct virtio_device *vdev, uint32_t notifyid)
 {
+#ifndef NK_SOCKETS
 	unsigned int num_vrings, i;
 	struct virtio_vring_info *vring_info;
 	struct virtqueue *vq;
+#endif /*NK_SOCKETS*/
 
 	if (!vdev)
 		return -RPROC_EINVAL;
 	/* We do nothing for vdev notification in this implementation */
 	if (vdev->notifyid == notifyid)
 		return 0;
+#ifdef NK_SOCKETS
+	rpmsg_virtio_rx_callback(vdev);
+#else /*NK_SOCKETS*/
 	num_vrings = vdev->vrings_num;
 	for (i = 0; i < num_vrings; i++) {
 		vring_info = &vdev->vrings_info[i];
@@ -331,6 +494,7 @@ int rproc_virtio_notified(struct virtio_device *vdev, uint32_t notifyid)
 			virtqueue_notification(vq);
 		}
 	}
+#endif /*NK_SOCKETS*/
 	return 0;
 }
 
