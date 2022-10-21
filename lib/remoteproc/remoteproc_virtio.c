@@ -16,7 +16,13 @@
 #include <metal/utilities.h>
 #include <metal/alloc.h>
 
-static void rproc_virtio_virtqueue_notify(struct virtqueue *vq)
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#define UNIX_PREFIX "unix:"
+#define UNIXS_PREFIX "unixs:"
+
+/*static void rproc_virtio_virtqueue_notify(struct virtqueue *vq)
 {
 	struct remoteproc_virtio *rpvdev;
 	struct virtio_vring_info *vring_info;
@@ -28,7 +34,7 @@ static void rproc_virtio_virtqueue_notify(struct virtqueue *vq)
 	metal_assert(vq_id < vdev->vrings_num);
 	vring_info = &vdev->vrings_info[vq_id];
 	rpvdev->notify(rpvdev->priv, vring_info->notifyid);
-}
+}*/
 
 static unsigned char rproc_virtio_get_status(struct virtio_device *vdev)
 {
@@ -128,7 +134,8 @@ static uint32_t rproc_virtio_negotiate_features(struct virtio_device *vdev,
 static void rproc_virtio_read_config(struct virtio_device *vdev,
 				     uint32_t offset, void *dst, int length)
 {
-	struct remoteproc_virtio *rpvdev;
+	printf(":( entering rproc_virtio_read_config");
+	/*struct remoteproc_virtio *rpvdev;
 	struct fw_rsc_vdev *vdev_rsc;
 	struct metal_io_region *io;
 	char *config;
@@ -141,14 +148,15 @@ static void rproc_virtio_read_config(struct virtio_device *vdev,
 	if (offset + length <= vdev_rsc->config_len)
 		metal_io_block_read(io,
 				metal_io_virt_to_offset(io, config + offset),
-				dst, length);
+				dst, length);*/
 }
 
 #ifndef VIRTIO_DEVICE_ONLY
 static void rproc_virtio_write_config(struct virtio_device *vdev,
 				      uint32_t offset, void *src, int length)
 {
-	struct remoteproc_virtio *rpvdev;
+	printf(":( entering rproc_virtio_write_config");
+	/*struct remoteproc_virtio *rpvdev;
 	struct fw_rsc_vdev *vdev_rsc;
 	struct metal_io_region *io;
 	char *config;
@@ -163,7 +171,7 @@ static void rproc_virtio_write_config(struct virtio_device *vdev,
 				metal_io_virt_to_offset(io, config + offset),
 				src, length);
 		rpvdev->notify(rpvdev->priv, vdev->notifyid);
-	}
+	}*/
 }
 
 static void rproc_virtio_reset_device(struct virtio_device *vdev)
@@ -178,7 +186,7 @@ static const struct virtio_dispatch remoteproc_virtio_dispatch_funcs = {
 	.get_status = rproc_virtio_get_status,
 	.get_features = rproc_virtio_get_features,
 	.read_config = rproc_virtio_read_config,
-	.notify = rproc_virtio_virtqueue_notify,
+	//.notify = rproc_virtio_virtqueue_notify,
 #ifndef VIRTIO_DEVICE_ONLY
 	/*
 	 * We suppose here that the vdev is in a shared memory so that can
@@ -193,6 +201,94 @@ static const struct virtio_dispatch remoteproc_virtio_dispatch_funcs = {
 #endif
 };
 
+
+static int sk_unix_client(const char *descr)
+{
+	struct sockaddr_un addr;
+	int fd;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+
+	memset(&addr, 0, sizeof addr);
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, descr + strlen(UNIX_PREFIX),
+		sizeof addr.sun_path);
+	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) >= 0) {
+		printf("connected to %s\r\n", descr + strlen(UNIX_PREFIX));
+		return fd;
+	}
+
+	close(fd);
+	return -1;
+}
+
+static int sk_unix_server(const char *descr)
+{
+	struct sockaddr_un addr;
+	int fd, nfd;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, descr + strlen(UNIXS_PREFIX),
+		sizeof addr.sun_path);
+	unlink(addr.sun_path);
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		goto fail;
+	}
+
+	listen(fd, 5);
+	printf("Waiting for connection on %s\r\n", addr.sun_path);
+	nfd = accept(fd, NULL, NULL);
+	close(fd);
+	return nfd;
+fail:
+	close(fd);
+	return -1;
+}
+
+static inline int is_sk_unix_server(const char *descr)
+{
+	if (memcmp(UNIXS_PREFIX, descr, strlen(UNIXS_PREFIX)))
+		return 0;
+	else
+		return 1;
+}
+
+static int event_open(const char *descr)
+{
+	int fd = -1;
+	int i;
+
+	if (descr == NULL) {
+		return fd;
+	}
+
+	if (!is_sk_unix_server(descr)) {
+		/* UNIX client.  Retry to connect a few times to give the peer
+		 *  a chance to setup.  */
+		for (i = 0; i < 100 && fd == -1; i++) {
+			fd = sk_unix_client(descr);
+			if (fd == -1)
+				usleep(i * 10 * 1000);
+		}
+	} else {
+		/* UNIX server. */
+		fd = sk_unix_server(descr);
+	}
+	printf("Open IPI: %s\r\n", descr);
+	return fd;
+}
+
+
+int vdev_notify(struct virtio_device *vdev)
+{
+	printf("yo notify");
+	struct remoteproc_virtio *rpvdev;
+	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
+	return rpvdev->notify(rpvdev->priv, vdev->notifyid);
+}
+
 struct virtio_device *
 rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 			 void *rsc, struct metal_io_region *rsc_io,
@@ -201,23 +297,23 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 			 virtio_dev_reset_cb rst_cb)
 {
 	struct remoteproc_virtio *rpvdev;
-	struct virtio_vring_info *vrings_info;
+	//struct virtio_vring_info *vrings_info;
 	struct fw_rsc_vdev *vdev_rsc = rsc;
 	struct virtio_device *vdev;
-	unsigned int num_vrings = vdev_rsc->num_of_vrings;
+	//unsigned int num_vrings = vdev_rsc->num_of_vrings;
 	unsigned int i;
 
 	rpvdev = metal_allocate_memory(sizeof(*rpvdev));
 	if (!rpvdev)
 		return NULL;
-	vrings_info = metal_allocate_memory(sizeof(*vrings_info) * num_vrings);
-	if (!vrings_info)
-		goto err0;
+	//vrings_info = metal_allocate_memory(sizeof(*vrings_info) * num_vrings);
+	//if (!vrings_info)
+	//	goto err0;
 	memset(rpvdev, 0, sizeof(*rpvdev));
-	memset(vrings_info, 0, sizeof(*vrings_info));
+	//memset(vrings_info, 0, sizeof(*vrings_info));
 	vdev = &rpvdev->vdev;
 
-	for (i = 0; i < num_vrings; i++) {
+	/*for (i = 0; i < num_vrings; i++) {
 		struct virtqueue *vq;
 		struct fw_rsc_vdev_vring *vring_rsc;
 		unsigned int num_extra_desc = 0;
@@ -232,11 +328,11 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 		if (!vq)
 			goto err1;
 		vrings_info[i].vq = vq;
-	}
+	}*/
 
 	rpvdev->notify = notify;
 	rpvdev->priv = priv;
-	vdev->vrings_info = vrings_info;
+	//vdev->vrings_info = vrings_info;
 	/* Assuming the shared memory has been mapped and registered if
 	 * necessary
 	 */
@@ -246,8 +342,17 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 	vdev->notifyid = notifyid;
 	vdev->role = role;
 	vdev->reset_cb = rst_cb;
-	vdev->vrings_num = num_vrings;
+	//vdev->vrings_num = num_vrings;
 	vdev->func = &remoteproc_virtio_dispatch_funcs;
+	vdev->vdev_notify = vdev_notify;
+	const char *host_descr = "unixs:/tmp/openamp.nk.0";
+	const char *remote_descr = "unix:/tmp/openamp.nk.0";
+	if (role == VIRTIO_DEV_DEVICE) {
+		vdev->fd = event_open(remote_descr);
+	}
+	if (role == VIRTIO_DEV_DRIVER) {
+		vdev->fd = event_open(host_descr);
+	}
 
 #ifndef VIRTIO_DEVICE_ONLY
 	if (role == VIRTIO_DEV_DRIVER) {
@@ -260,11 +365,11 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 	return &rpvdev->vdev;
 
 err1:
-	for (i = 0; i < num_vrings; i++) {
+	/*for (i = 0; i < num_vrings; i++) {
 		if (vrings_info[i].vq)
 			metal_free_memory(vrings_info[i].vq);
 	}
-	metal_free_memory(vrings_info);
+	metal_free_memory(vrings_info);*/
 err0:
 	metal_free_memory(rpvdev);
 	return NULL;
@@ -278,7 +383,7 @@ void rproc_virtio_remove_vdev(struct virtio_device *vdev)
 	if (!vdev)
 		return;
 	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
-	for (i = 0; i < vdev->vrings_num; i++) {
+	/*for (i = 0; i < vdev->vrings_num; i++) {
 		struct virtqueue *vq;
 
 		vq = vdev->vrings_info[i].vq;
@@ -286,11 +391,11 @@ void rproc_virtio_remove_vdev(struct virtio_device *vdev)
 			metal_free_memory(vq);
 	}
 	if (vdev->vrings_info)
-		metal_free_memory(vdev->vrings_info);
+		metal_free_memory(vdev->vrings_info);*/
 	metal_free_memory(rpvdev);
 }
 
-int rproc_virtio_init_vring(struct virtio_device *vdev, unsigned int index,
+/*int rproc_virtio_init_vring(struct virtio_device *vdev, unsigned int index,
 			    unsigned int notifyid, void *va,
 			    struct metal_io_region *io,
 			    unsigned int num_descs, unsigned int align)
@@ -309,20 +414,20 @@ int rproc_virtio_init_vring(struct virtio_device *vdev, unsigned int index,
 	vring_info->info.align = align;
 
 	return 0;
-}
+}*/
 
 int rproc_virtio_notified(struct virtio_device *vdev, uint32_t notifyid)
 {
-	unsigned int num_vrings, i;
-	struct virtio_vring_info *vring_info;
-	struct virtqueue *vq;
+	//unsigned int num_vrings, i;
+	//struct virtio_vring_info *vring_info;
+	//struct virtqueue *vq;
 
 	if (!vdev)
 		return -RPROC_EINVAL;
 	/* We do nothing for vdev notification in this implementation */
 	if (vdev->notifyid == notifyid)
 		return 0;
-	num_vrings = vdev->vrings_num;
+	/*num_vrings = vdev->vrings_num;
 	for (i = 0; i < num_vrings; i++) {
 		vring_info = &vdev->vrings_info[i];
 		if (vring_info->notifyid == notifyid ||
@@ -330,7 +435,8 @@ int rproc_virtio_notified(struct virtio_device *vdev, uint32_t notifyid)
 			vq = vring_info->vq;
 			virtqueue_notification(vq);
 		}
-	}
+	}*/
+	rpmsg_virtio_rx_callback(vdev);
 	return 0;
 }
 

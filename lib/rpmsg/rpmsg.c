@@ -120,10 +120,11 @@ int rpmsg_send_offchannel_raw(struct rpmsg_endpoint *ept, uint32_t src,
 
 	rdev = ept->rdev;
 
-	if (rdev->ops.send_offchannel_raw)
+	if (rdev->ops.send_offchannel_raw) {
+		printf("send_ns_message raw\n");
 		return rdev->ops.send_offchannel_raw(rdev, src, dst, data,
 						     len, wait);
-
+	}
 	return RPMSG_ERR_PARAM;
 }
 
@@ -135,6 +136,7 @@ int rpmsg_send_ns_message(struct rpmsg_endpoint *ept, unsigned long flags)
 	ns_msg.flags = flags;
 	ns_msg.addr = ept->addr;
 	strncpy(ns_msg.name, ept->name, sizeof(ns_msg.name));
+	printf("send_ns_message\n");
 	ret = rpmsg_send_offchannel_raw(ept, ept->addr,
 					RPMSG_NS_EPT_ADDR,
 					&ns_msg, sizeof(ns_msg), true);
@@ -210,25 +212,40 @@ struct rpmsg_endpoint *rpmsg_get_endpoint(struct rpmsg_device *rdev,
 	struct metal_list *node;
 	struct rpmsg_endpoint *ept;
 
+	printf("rpmsg_get_endpoint a\n");
 	metal_list_for_each(&rdev->endpoints, node) {
 		int name_match = 0;
-
+		printf("rpmsg_get_endpoint b\n");
 		ept = metal_container_of(node, struct rpmsg_endpoint, node);
+		printf("rpmsg_get_endpoint b1 %x\n", ept);
+		if(!ept) printf("ept NULL!\n");
 		/* try to get by local address only */
-		if (addr != RPMSG_ADDR_ANY && ept->addr == addr)
+		if (addr != RPMSG_ADDR_ANY)
+			printf("addr != RPMSG_ADDR_ANY");
+		else
+			printf("addr = RPMSG_ADDR_ANY");
+		printf("ept->addr %u, addr %u", ept->addr, addr);
+		if (addr != RPMSG_ADDR_ANY && ept->addr == addr) {
+			printf("return ept\n");
 			return ept;
+		}
+		printf("rpmsg_get_endpoint c\n");
 		/* else use name service and destination address */
 		if (name)
 			name_match = !strncmp(ept->name, name,
 					      sizeof(ept->name));
+		printf("rpmsg_get_endpoint d\n");
 		if (!name || !name_match)
 			continue;
+		printf("rpmsg_get_endpoint e\n");
 		/* destination address is known, equal to ept remote address */
 		if (dest_addr != RPMSG_ADDR_ANY && ept->dest_addr == dest_addr)
 			return ept;
+		printf("rpmsg_get_endpoint f\n");
 		/* ept is registered but not associated to remote ept */
 		if (addr == RPMSG_ADDR_ANY && ept->dest_addr == RPMSG_ADDR_ANY)
 			return ept;
+		printf("rpmsg_get_endpoint g\n");
 	}
 	return NULL;
 }
@@ -256,6 +273,7 @@ void rpmsg_register_endpoint(struct rpmsg_device *rdev,
 	strncpy(ept->name, name ? name : "", sizeof(ept->name));
 	ept->addr = src;
 	ept->dest_addr = dest;
+	printf("dest_addr set in register endpoint 0x%x\n", ept->dest_addr);
 	ept->cb = cb;
 	ept->ns_unbind_cb = ns_unbind_cb;
 	ept->rdev = rdev;
@@ -299,6 +317,7 @@ int rpmsg_create_ept(struct rpmsg_endpoint *ept, struct rpmsg_device *rdev,
 		 */
 	}
 
+	printf("rpmsg_register_endpoint in rpmsg_create_ept\n");
 	rpmsg_register_endpoint(rdev, ept, name, addr, dest, cb, unbind_cb);
 	metal_mutex_release(&rdev->lock);
 
@@ -306,7 +325,7 @@ int rpmsg_create_ept(struct rpmsg_endpoint *ept, struct rpmsg_device *rdev,
 	if (ept->name[0] && rdev->support_ns &&
 	    ept->dest_addr == RPMSG_ADDR_ANY)
 		status = rpmsg_send_ns_message(ept, RPMSG_NS_CREATE);
-
+	printf("rpmsg_send_ns_message done\n");
 	if (status)
 		rpmsg_unregister_endpoint(ept);
 	return status;

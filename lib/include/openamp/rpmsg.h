@@ -508,6 +508,9 @@ void rpmsg_destroy_ept(struct rpmsg_endpoint *ept);
  */
 static inline unsigned int is_rpmsg_ept_ready(struct rpmsg_endpoint *ept)
 {
+	if (ept->rdev) printf("rdev ok\n"); else printf("rdev ko\n");
+	if (ept->dest_addr) printf("dest_addr ok\n"); else printf("dest_addr ko\n");
+	if (ept->dest_addr != RPMSG_ADDR_ANY) printf("dest_addr different from RPMSG_ADDR_ANY\n"); else printf("dest_addr = RPMSG_ADDR_ANY\n");
 	return ept && ept->rdev && ept->dest_addr != RPMSG_ADDR_ANY;
 }
 
