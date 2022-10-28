@@ -519,7 +519,7 @@ void rpmsg_virtio_rx_callback(struct virtio_device *vdev)
 	uint16_t idx;
 	int status;
 
-	uint8_t totobuf[512];
+	//uint8_t totobuf[512];
 
 	metal_mutex_acquire(&rdev->lock);
 
@@ -547,12 +547,13 @@ void rpmsg_virtio_rx_callback(struct virtio_device *vdev)
 			printf("something went wrong 2!\n");
 		}
 		else {
-			//len = read(vdev->fd, vdev->buf, vdev->len);
-			//printf("read data %u max was %u\n", len, vdev->len);
-			//rp_hdr = (struct rpmsg_hdr *)vdev->buf;
-			len = read(vdev->fd, totobuf, 512);
+			len = read(vdev->fd, vdev->buf, vdev->len);
 			printf("read data %u max was %u\n", len, vdev->len);
-			rp_hdr = (struct rpmsg_hdr *)totobuf;
+			if( len )
+				rp_hdr = (struct rpmsg_hdr *)vdev->buf;
+			//len = read(vdev->fd, totobuf, 512);
+			//printf("read data %u max was %u\n", len, vdev->len);
+			//rp_hdr = (struct rpmsg_hdr *)totobuf;
 			printf("yup\n");
 		}
 	}
@@ -619,7 +620,8 @@ void rpmsg_virtio_rx_callback(struct virtio_device *vdev)
 				printf("about to read\n");
 				len = read(vdev->fd, vdev->buf, vdev->len);
 				printf("read data %u max was %u\n", len, vdev->len);
-				rp_hdr = (struct rpmsg_hdr *)vdev->buf;
+				if( len )
+					rp_hdr = (struct rpmsg_hdr *)vdev->buf;
 			}
 		}
 		if (!rp_hdr) {
