@@ -427,9 +427,8 @@ static int rpmsg_virtio_send_offchannel_nocopy(struct rpmsg_device *rdev,
 	
 	//actual socket write
 	write(rvdev->vdev->fd, hdr, len + sizeof(struct rpmsg_hdr));
-	//nk let the other side know?
-	//nk_notify(rvdev->vdev);
-	rvdev->vdev->vdev_notify(rvdev->vdev);
+	rpmsg_virtio_notify(rvdev);
+	//rvdev->vdev->vdev_notify(rvdev->vdev);
 
 	metal_mutex_release(&rdev->lock);
 
@@ -628,7 +627,8 @@ void rpmsg_virtio_rx_callback(struct virtio_device *vdev)
 			//nk virtqueue_kick(rvdev->rvq);
 			printf("notify done!");
 			//nk_notify(vdev);
-			vdev->vdev_notify(vdev);
+			//vdev->vdev_notify(vdev);
+			rpmsg_virtio_notify(rvdev);
 		}
 		metal_mutex_release(&rdev->lock);
 	}

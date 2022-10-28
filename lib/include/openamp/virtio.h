@@ -127,8 +127,6 @@ struct virtio_device {
 	void *priv; /**< TODO: remove pointer to virtio_device private data */
 	//unsigned int vrings_num; /**< number of vrings */ //nk unused
 	//struct virtio_vring_info *vrings_info; //nk unused
-	//int (*notify)(struct remoteproc *rproc, uint32_t id);
-	int (*vdev_notify)(struct virtio_device *vdev);
 	int fd;
 	void *buf;
 	void *payload;
@@ -167,7 +165,7 @@ struct virtio_dispatch {
 	void (*write_config)(struct virtio_device *dev, uint32_t offset,
 			     void *src, int length);
 	void (*reset_device)(struct virtio_device *dev);
-	//void (*notify)(struct virtqueue *vq);
+	int (*notify)(struct virtio_device *vdev);
 };
 
 int virtio_create_virtqueues(struct virtio_device *vdev, unsigned int flags,

@@ -35,6 +35,13 @@
 	vring_info = &vdev->vrings_info[vq_id];
 	rpvdev->notify(rpvdev->priv, vring_info->notifyid);
 }*/
+int vdev_notify(struct virtio_device *vdev)
+{
+	printf("yo notify");
+	struct remoteproc_virtio *rpvdev;
+	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
+	return rpvdev->notify(rpvdev->priv, vdev->notifyid);
+}
 
 static unsigned char rproc_virtio_get_status(struct virtio_device *vdev)
 {
@@ -186,7 +193,7 @@ static const struct virtio_dispatch remoteproc_virtio_dispatch_funcs = {
 	.get_status = rproc_virtio_get_status,
 	.get_features = rproc_virtio_get_features,
 	.read_config = rproc_virtio_read_config,
-	//.notify = rproc_virtio_virtqueue_notify,
+	.notify = vdev_notify,
 #ifndef VIRTIO_DEVICE_ONLY
 	/*
 	 * We suppose here that the vdev is in a shared memory so that can
@@ -280,15 +287,6 @@ static int event_open(const char *descr)
 	return fd;
 }
 
-
-int vdev_notify(struct virtio_device *vdev)
-{
-	printf("yo notify");
-	struct remoteproc_virtio *rpvdev;
-	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
-	return rpvdev->notify(rpvdev->priv, vdev->notifyid);
-}
-
 struct virtio_device *
 rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 			 void *rsc, struct metal_io_region *rsc_io,
@@ -344,7 +342,6 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 	vdev->reset_cb = rst_cb;
 	//vdev->vrings_num = num_vrings;
 	vdev->func = &remoteproc_virtio_dispatch_funcs;
-	vdev->vdev_notify = vdev_notify;
 	const char *host_descr = "unixs:/tmp/openamp.nk.0";
 	const char *remote_descr = "unix:/tmp/openamp.nk.0";
 	if (role == VIRTIO_DEV_DEVICE) {

@@ -109,6 +109,12 @@ static inline void rpmsg_virtio_set_status(struct rpmsg_virtio_device *rvdev,
 	rvdev->vdev->func->set_status(rvdev->vdev, status);
 }
 
+static inline int rpmsg_virtio_notify(struct rpmsg_virtio_device *rvdev)
+{
+	return rvdev->vdev->func->notify(rvdev->vdev);
+}
+
+
 static inline uint8_t rpmsg_virtio_get_status(struct rpmsg_virtio_device *rvdev)
 {
 	return rvdev->vdev->func->get_status(rvdev->vdev);
