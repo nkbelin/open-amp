@@ -565,19 +565,16 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 		printf("something went wrong!\n");
 	} else if (n == 0) {
 		//timeout
-		printf("nothing to read\n");
+		//printf("nothing to read\n");
 	} else {
 		if (!FD_ISSET(vdev->fd, &input)) {
 			printf("something went wrong 2!\n");
 		}
 		else {
-			//len = read(vdev->fd, vdev->buf, vdev->len);
+			len = read(vdev->fd, vdev->buf, vdev->len);
 			//printf("read data %u max was %u\n", len, vdev->len);
-			//rp_hdr = (struct rpmsg_hdr *)vdev->buf;
-			len = read(vdev->fd, totobuf, 512);
-			printf("read data %u max was %u\n", len, vdev->len);
-			rp_hdr = (struct rpmsg_hdr *)totobuf;
-			printf("yup\n");
+			if( len )
+				rp_hdr = (struct rpmsg_hdr *)vdev->buf;
 		}
 	}
 #else /*NK_SOCKETS*/
@@ -623,14 +620,16 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 			printf("something went wrong!\n");
 		} else if (n == 0) {
 			//timeout
-			printf("nothing to read\n");
+			//printf("nothing to read\n");
 		} else {
 			if (!FD_ISSET(vdev->fd, &input)) {
 				printf("something went wrong 2!\n");
 			}
 			else {
 				len = read(vdev->fd, vdev->buf, vdev->len);
-				rp_hdr = (struct rpmsg_hdr *)vdev->buf;
+				//printf("read data %u max was %u\n", len, vdev->len);
+				if( len )
+					rp_hdr = (struct rpmsg_hdr *)vdev->buf;
 			}
 		}
 		if (!rp_hdr) {
