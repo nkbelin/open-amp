@@ -432,7 +432,9 @@ void rproc_virtio_remove_vdev(struct virtio_device *vdev)
 	if (!vdev)
 		return;
 	rpvdev = metal_container_of(vdev, struct remoteproc_virtio, vdev);
-#ifndef NK_SOCKETS
+#ifdef NK_SOCKETS
+	close(vdev->fd);
+#else /*NK_SOCKETS*/
 	for (i = 0; i < vdev->vrings_num; i++) {
 		struct virtqueue *vq;
 

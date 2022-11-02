@@ -959,7 +959,12 @@ void rpmsg_deinit_vdev(struct rpmsg_virtio_device *rvdev)
 			rpmsg_destroy_ept(ept);
 		}
 
-#ifndef NK_SOCKETS
+#ifdef NK_SOCKETS
+	if (rvdev->vdev->buf) {
+		metal_free_memory(rvdev->vdev->buf);
+		rvdev->vdev->buf = NULL;
+	}
+#else /*NK_SOCKETS*/
 		rvdev->rvq = 0;
 		rvdev->svq = 0;
 #endif /*NK_SOCKETS*/
