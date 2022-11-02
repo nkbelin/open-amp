@@ -71,17 +71,9 @@ struct rpmsg_virtio_device {
 	struct rpmsg_device rdev;
 	struct rpmsg_virtio_config config;
 	struct virtio_device *vdev;
-#ifndef NK_SOCKETS
-	struct virtqueue *rvq;
-	struct virtqueue *svq;
-	struct metal_io_region *shbuf_io;
-	struct rpmsg_virtio_shm_pool *shpool;
-#endif /*NK_SOCKETS*/
 };
 
-#ifdef NK_SOCKETS
 void rpmsg_virtio_rx_callback(struct virtio_device *vdev);
-#endif /*NK_SOCKETS*/
 
 #define RPMSG_REMOTE	VIRTIO_DEV_DEVICE
 #define RPMSG_HOST	VIRTIO_DEV_DRIVER

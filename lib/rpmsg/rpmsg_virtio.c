@@ -75,32 +75,6 @@ void rpmsg_virtio_init_shm_pool(struct rpmsg_virtio_shm_pool *shpool,
  * @param idx    - buffer index
  *
  */
-#ifndef NK_SOCKETS
-static void rpmsg_virtio_return_buffer(struct rpmsg_virtio_device *rvdev,
-				       void *buffer, uint32_t len,
-				       uint16_t idx)
-{
-	unsigned int role = rpmsg_virtio_get_role(rvdev);
-#ifndef VIRTIO_DEVICE_ONLY
-	if (role == RPMSG_HOST) {
-		struct virtqueue_buf vqbuf;
-
-		(void)idx;
-		/* Initialize buffer node */
-		vqbuf.buf = buffer;
-		vqbuf.len = len;
-		virtqueue_add_buffer(rvdev->rvq, &vqbuf, 0, 1, buffer);
-	}
-#endif /*VIRTIO_DEVICE_ONLY*/
-
-#ifndef VIRTIO_DRIVER_ONLY
-	if (role == RPMSG_REMOTE) {
-		(void)buffer;
-		virtqueue_add_consumed_buffer(rvdev->rvq, idx, len);
-	}
-#endif /*VIRTIO_DRIVER_ONLY*/
-}
-#endif /*NK_SOCKETS*/
 
 /**
  * rpmsg_virtio_enqueue_buffer
@@ -114,38 +88,6 @@ static void rpmsg_virtio_return_buffer(struct rpmsg_virtio_device *rvdev,
  *
  * @return - status of function execution
  */
-#ifndef NK_SOCKETS
-static int rpmsg_virtio_enqueue_buffer(struct rpmsg_virtio_device *rvdev,
-				       void *buffer, uint32_t len,
-				       uint16_t idx)
-{
-	unsigned int role = rpmsg_virtio_get_role(rvdev);
-
-#ifdef VIRTIO_CACHED_BUFFERS
-	metal_cache_flush(buffer, len);
-#endif /* VIRTIO_CACHED_BUFFERS */
-
-#ifndef VIRTIO_DEVICE_ONLY
-	if (role == RPMSG_HOST) {
-		struct virtqueue_buf vqbuf;
-		(void)idx;
-
-		/* Initialize buffer node */
-		vqbuf.buf = buffer;
-		vqbuf.len = len;
-		return virtqueue_add_buffer(rvdev->svq, &vqbuf, 1, 0, buffer);
-	}
-#endif /*!VIRTIO_DEVICE_ONLY*/
-
-#ifndef VIRTIO_DRIVER_ONLY
-	if (role == RPMSG_REMOTE) {
-		(void)buffer;
-		return virtqueue_add_consumed_buffer(rvdev->svq, idx, len);
-	}
-#endif /*!VIRTIO_DRIVER_ONLY*/
-	return 0;
-}
-#endif /*NK_SOCKETS*/
 
 /**
  * rpmsg_virtio_get_tx_buffer
@@ -164,32 +106,10 @@ static void *rpmsg_virtio_get_tx_buffer(struct rpmsg_virtio_device *rvdev,
 	unsigned int role = rpmsg_virtio_get_role(rvdev);
 	void *data = NULL;
 
-#ifdef NK_SOCKETS
 	data = rvdev->vdev->buf;
 	*len = rvdev->vdev->len;
 	*idx = 0; //not used ?
 	return data;
-#else /*NK_SOCKETS*/
-#ifndef VIRTIO_DEVICE_ONLY
-	if (role == RPMSG_HOST) {
-		data = virtqueue_get_buffer(rvdev->svq, len, idx);
-		if (!data && rvdev->svq->vq_free_cnt) {
-			data = rpmsg_virtio_shm_pool_get_buffer(rvdev->shpool,
-					rvdev->config.h2r_buf_size);
-			*len = rvdev->config.h2r_buf_size;
-			*idx = 0;
-		}
-	}
-#endif /*!VIRTIO_DEVICE_ONLY*/
-
-#ifndef VIRTIO_DRIVER_ONLY
-	if (role == RPMSG_REMOTE) {
-		data = virtqueue_get_available_buffer(rvdev->svq, idx, len);
-	}
-#endif /*!VIRTIO_DRIVER_ONLY*/
-
-	return data;
-#endif /*NK_SOCKETS*/
 }
 
 /**
@@ -204,34 +124,6 @@ static void *rpmsg_virtio_get_tx_buffer(struct rpmsg_virtio_device *rvdev,
  * @return - pointer to received buffer
  *
  */
-#ifndef NK_SOCKETS
-static void *rpmsg_virtio_get_rx_buffer(struct rpmsg_virtio_device *rvdev,
-					uint32_t *len, uint16_t *idx)
-{
-	unsigned int role = rpmsg_virtio_get_role(rvdev);
-	void *data = NULL;
-
-#ifndef VIRTIO_DEVICE_ONLY
-	if (role == RPMSG_HOST) {
-		data = virtqueue_get_buffer(rvdev->rvq, len, idx);
-	}
-#endif /*!VIRTIO_DEVICE_ONLY*/
-
-#ifndef VIRTIO_DRIVER_ONLY
-	if (role == RPMSG_REMOTE) {
-		data =
-		    virtqueue_get_available_buffer(rvdev->rvq, idx, len);
-	}
-#endif /*!VIRTIO_DRIVER_ONLY*/
-
-#ifdef VIRTIO_CACHED_BUFFERS
-	/* Invalidate the buffer before returning it */
-	metal_cache_invalidate(data, *len);
-#endif /* VIRTIO_CACHED_BUFFERS */
-
-	return data;
-}
-#endif /*NK_SOCKETS*/
 
 #ifndef VIRTIO_DRIVER_ONLY
 /**
@@ -287,13 +179,7 @@ static int _rpmsg_virtio_get_buffer_size(struct rpmsg_virtio_device *rvdev)
 		 * If other core is host then buffers are provided by it,
 		 * so get the buffer size from the virtqueue.
 		 */
-#ifdef NK_SOCKETS
 		length = rvdev->vdev->len - sizeof(struct rpmsg_hdr);
-#else /*NK_SOCKETS*/
-		length =
-		    (int)virtqueue_get_desc_size(rvdev->svq) -
-		    sizeof(struct rpmsg_hdr);
-#endif /*NK_SOCKETS*/
 	}
 #endif /*!VIRTIO_DRIVER_ONLY*/
 
@@ -331,14 +217,7 @@ static void rpmsg_virtio_release_rx_buffer(struct rpmsg_device *rdev,
 
 	metal_mutex_acquire(&rdev->lock);
 	/* Return buffer on virtqueue. */
-#ifdef NK_SOCKETS
 	//TODO notify here?
-#else /*NK_SOCKETS*/
-	len = virtqueue_get_buffer_length(rvdev->rvq, idx);
-	rpmsg_virtio_return_buffer(rvdev, rp_hdr, len, idx);
-	/* Tell peer we return some rx buffers */
-	virtqueue_kick(rvdev->rvq);
-#endif /*NK_SOCKETS*/
 	metal_mutex_release(&rdev->lock);
 }
 
@@ -355,13 +234,7 @@ static void *rpmsg_virtio_get_tx_payload_buffer(struct rpmsg_device *rdev,
 	rvdev = metal_container_of(rdev, struct rpmsg_virtio_device, rdev);
 
 	/* Validate device state */
-#ifdef NK_SOCKETS
 	//TODO is the status check needed here?
-#else /*NK_SOCKETS*/
-	status = rpmsg_virtio_get_status(rvdev);
-	if (!(status & VIRTIO_CONFIG_STATUS_DRIVER_OK))
-		return NULL;
-#endif /*NK_SOCKETS*/
 
 	if (wait)
 		tick_count = RPMSG_TICK_COUNT / RPMSG_TICKS_PER_INTERVAL;
@@ -417,14 +290,7 @@ static int rpmsg_virtio_send_offchannel_nocopy(struct rpmsg_device *rdev,
 	rp_hdr.flags = 0;
 
 	/* Copy data to rpmsg buffer. */
-#ifdef NK_SOCKETS
 	memcpy(hdr, &rp_hdr, sizeof(rp_hdr));
-#else /*NK_SOCKETS*/
-	io = rvdev->shbuf_io;
-	status = metal_io_block_write(io, metal_io_virt_to_offset(io, hdr),
-				      &rp_hdr, sizeof(rp_hdr));
-	RPMSG_ASSERT(status == sizeof(rp_hdr), "failed to write header\r\n");
-#endif /*NK_SOCKETS*/
 
 	metal_mutex_acquire(&rdev->lock);
 
@@ -433,24 +299,13 @@ static int rpmsg_virtio_send_offchannel_nocopy(struct rpmsg_device *rdev,
 		buff_len = rvdev->config.h2r_buf_size;
 	else
 #endif /*!VIRTIO_DEVICE_ONLY*/
-#ifdef NK_SOCKETS
 		buff_len = rvdev->vdev->len;
-#else /*NK_SOCKETS*/
-		buff_len = virtqueue_get_buffer_length(rvdev->svq, idx);
-#endif /*NK_SOCKETS*/
 
 	/* Enqueue buffer on virtqueue. */
-#ifdef NK_SOCKETS
 	//actual socket write
 	write(rvdev->vdev->fd, hdr, len + sizeof(struct rpmsg_hdr));
 	//nk let the other side know?
 	rpmsg_virtio_notify(rvdev);
-#else /*NK_SOCKETS*/
-	status = rpmsg_virtio_enqueue_buffer(rvdev, hdr, buff_len, idx);
-	RPMSG_ASSERT(status == VQUEUE_SUCCESS, "failed to enqueue buffer\r\n");
-	/* Let the other side know that there is a job to process. */
-	virtqueue_kick(rvdev->svq);
-#endif /*NK_SOCKETS*/
 
 	metal_mutex_release(&rdev->lock);
 
@@ -493,15 +348,9 @@ static int rpmsg_virtio_send_offchannel_raw(struct rpmsg_device *rdev,
 	/* Copy data to rpmsg buffer. */
 	if (len > (int)buff_len)
 		len = buff_len;
-#ifdef NK_SOCKETS
 	//nk copy source data, len to socker buffer?
 	memcpy(buffer, data, len);
 	status = len;
-#else /*NK_SOCKETS*/
-	io = rvdev->shbuf_io;
-	status = metal_io_block_write(io, metal_io_virt_to_offset(io, buffer),
-				      data, len);
-#endif /*NK_SOCKETS*/
 	RPMSG_ASSERT(status == len, "failed to write buffer\r\n");
 
 	return rpmsg_virtio_send_offchannel_nocopy(rdev, src, dst, buffer, len);
@@ -529,14 +378,8 @@ static void rpmsg_virtio_tx_callback(struct virtqueue *vq)
  * @param vq - pointer to virtqueue on which messages is received
  *
  */
-#ifdef NK_SOCKETS
 void rpmsg_virtio_rx_callback(struct virtio_device *vdev)
 {
-#else /*NK_SOCKETS*/
-static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
-{
-	struct virtio_device *vdev = vq->vq_dev;
-#endif /*NK_SOCKETS*/
 	struct rpmsg_virtio_device *rvdev = vdev->priv;
 	struct rpmsg_device *rdev = &rvdev->rdev;
 	struct rpmsg_endpoint *ept;
@@ -548,8 +391,6 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 	metal_mutex_acquire(&rdev->lock);
 
 	/* Process the received data from remote node */
-
-#ifdef NK_SOCKETS
 	uint8_t totobuf[512];
 	fd_set         input;
 	FD_ZERO(&input);
@@ -577,9 +418,6 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 				rp_hdr = (struct rpmsg_hdr *)vdev->buf;
 		}
 	}
-#else /*NK_SOCKETS*/
-	rp_hdr = rpmsg_virtio_get_rx_buffer(rvdev, &len, &idx);
-#endif /*NK_SOCKETS*/
 
 	metal_mutex_release(&rdev->lock);
 
@@ -608,7 +446,6 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 
 		metal_mutex_acquire(&rdev->lock);
 
-#ifdef NK_SOCKETS
 		rp_hdr = NULL;
 		FD_ZERO(&input);
 		FD_SET(vdev->fd, &input);
@@ -636,19 +473,6 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 			/* tell peer we return some rx buffer */
 			rpmsg_virtio_notify(rvdev);
 		}
-#else /*NK_SOCKETS*/
-		/* Check whether callback wants to hold buffer */
-		if (!(rp_hdr->reserved & RPMSG_BUF_HELD)) {
-			/* No, return used buffers. */
-			rpmsg_virtio_return_buffer(rvdev, rp_hdr, len, idx);
-		}
-
-		rp_hdr = rpmsg_virtio_get_rx_buffer(rvdev, &len, &idx);
-		if (!rp_hdr) {
-			/* tell peer we return some rx buffer */
-			virtqueue_kick(rvdev->rvq);
-		}
-#endif /*NK_SOCKETS*/
 		metal_mutex_release(&rdev->lock);
 	}
 }
@@ -672,9 +496,6 @@ static int rpmsg_virtio_ns_callback(struct rpmsg_endpoint *ept, void *data,
 {
 	struct rpmsg_device *rdev = ept->rdev;
 	struct rpmsg_virtio_device *rvdev = (struct rpmsg_virtio_device *)rdev;
-#ifndef NK_SOCKETS
-	struct metal_io_region *io = rvdev->shbuf_io;
-#endif /*NK_SOCKETS*/
 	struct rpmsg_endpoint *_ept;
 	struct rpmsg_ns_msg *ns_msg;
 	uint32_t dest;
@@ -687,14 +508,8 @@ static int rpmsg_virtio_ns_callback(struct rpmsg_endpoint *ept, void *data,
 	if (len != sizeof(*ns_msg))
 		/* Returns as the message is corrupted */
 		return RPMSG_SUCCESS;
-#ifdef NK_SOCKETS
 	memcpy(name, ns_msg->name, sizeof(name));
 	printf("Name is %s\n", name);
-#else /*NK_SOCKETS*/
-	metal_io_block_read(io,
-			    metal_io_virt_to_offset(io, ns_msg->name),
-			    &name, sizeof(name));
-#endif /*NK_SOCKETS*/
 	dest = ns_msg->addr;
 
 	/* check if a Ept has been locally registered */
@@ -762,18 +577,9 @@ int rpmsg_init_vdev_with_config(struct rpmsg_virtio_device *rvdev,
 {
 	struct rpmsg_device *rdev;
 	unsigned int i, role;
-#ifdef NK_SOCKETS
 	int status = RPMSG_SUCCESS;
 	if (!rvdev || !vdev)
 		return RPMSG_ERR_PARAM;
-#else /*NK_SOCKETS*/
-	const char *vq_names[RPMSG_NUM_VRINGS];
-	vq_callback callback[RPMSG_NUM_VRINGS];
-	int status;
-
-	if (!rvdev || !vdev || !shm_io)
-		return RPMSG_ERR_PARAM;
-#endif /*NK_SOCKETS*/
 
 	rdev = &rvdev->rdev;
 	memset(rdev, 0, sizeof(*rdev));
@@ -820,32 +626,16 @@ int rpmsg_init_vdev_with_config(struct rpmsg_virtio_device *rvdev,
 		 * Since device is RPMSG Remote so we need to manage the
 		 * shared buffers. Create shared memory pool to handle buffers.
 		 */
-#ifdef NK_SOCKETS
 		vdev->buf = metal_allocate_memory(config->h2r_buf_size);
 		vdev->payload = RPMSG_LOCATE_DATA(vdev->buf);
 		vdev->len = config->h2r_buf_size;
 		if (!vdev->buf) {
 			return RPMSG_ERR_NO_BUFF;
 		}
-#else /*NK_SOCKETS*/
-		rvdev->shpool = config->split_shpool ? shpool + 1 : shpool;
-		if (!shpool)
-			return RPMSG_ERR_PARAM;
-		if (!shpool->size || !rvdev->shpool->size)
-			return RPMSG_ERR_NO_BUFF;
-
-		vq_names[0] = "rx_vq";
-		vq_names[1] = "tx_vq";
-		callback[0] = rpmsg_virtio_rx_callback;
-		callback[1] = rpmsg_virtio_tx_callback;
-		rvdev->rvq  = vdev->vrings_info[0].vq;
-		rvdev->svq  = vdev->vrings_info[1].vq;
-#endif /*NK_SOCKETS*/
 	}
 #endif /*!VIRTIO_DEVICE_ONLY*/
 
 #ifndef VIRTIO_DRIVER_ONLY
-#ifdef NK_SOCKETS
 	if (role == RPMSG_REMOTE) {
 		vdev->buf = metal_allocate_memory(config->r2h_buf_size);
 		vdev->payload = RPMSG_LOCATE_DATA(vdev->buf);
@@ -854,75 +644,7 @@ int rpmsg_init_vdev_with_config(struct rpmsg_virtio_device *rvdev,
 			return RPMSG_ERR_NO_BUFF;
 		}
 	}
-#else /*NK_SOCKETS*/
-	(void)shpool;
-	if (role == RPMSG_REMOTE) {
-		vq_names[0] = "tx_vq";
-		vq_names[1] = "rx_vq";
-		callback[0] = rpmsg_virtio_tx_callback;
-		callback[1] = rpmsg_virtio_rx_callback;
-		rvdev->rvq  = vdev->vrings_info[1].vq;
-		rvdev->svq  = vdev->vrings_info[0].vq;
-	}
-#endif /*NK_SOCKETS*/
 #endif /*!VIRTIO_DRIVER_ONLY*/
-
-#ifndef NK_SOCKETS
-	rvdev->shbuf_io = shm_io;
-
-	/* Create virtqueues for remote device */
-	status = rpmsg_virtio_create_virtqueues(rvdev, 0, RPMSG_NUM_VRINGS,
-						vq_names, callback);
-	if (status != RPMSG_SUCCESS)
-		return status;
-
-	/*
-	 * Suppress "tx-complete" interrupts
-	 * since send method use busy loop when buffer pool exhaust
-	 */
-	virtqueue_disable_cb(rvdev->svq);
-
-	/* TODO: can have a virtio function to set the shared memory I/O */
-	for (i = 0; i < RPMSG_NUM_VRINGS; i++) {
-		struct virtqueue *vq;
-
-		vq = vdev->vrings_info[i].vq;
-		vq->shm_io = shm_io;
-	}
-
-#ifndef VIRTIO_DEVICE_ONLY
-	if (role == RPMSG_HOST) {
-		struct virtqueue_buf vqbuf;
-		unsigned int idx;
-		void *buffer;
-
-		vqbuf.len = rvdev->config.r2h_buf_size;
-		for (idx = 0; idx < rvdev->rvq->vq_nentries; idx++) {
-			/* Initialize TX virtqueue buffers for remote device */
-			buffer = rpmsg_virtio_shm_pool_get_buffer(shpool,
-					rvdev->config.r2h_buf_size);
-
-			if (!buffer) {
-				return RPMSG_ERR_NO_BUFF;
-			}
-
-			vqbuf.buf = buffer;
-
-			metal_io_block_set(shm_io,
-					   metal_io_virt_to_offset(shm_io,
-								   buffer),
-					   0x00, rvdev->config.r2h_buf_size);
-			status =
-				virtqueue_add_buffer(rvdev->rvq, &vqbuf, 0, 1,
-						     buffer);
-
-			if (status != RPMSG_SUCCESS) {
-				return status;
-			}
-		}
-	}
-#endif /*!VIRTIO_DEVICE_ONLY*/
-#endif /*NK_SOCKETS*/
 
 	/* Initialize channels and endpoints list */
 	metal_list_init(&rdev->endpoints);
@@ -959,15 +681,10 @@ void rpmsg_deinit_vdev(struct rpmsg_virtio_device *rvdev)
 			rpmsg_destroy_ept(ept);
 		}
 
-#ifdef NK_SOCKETS
 	if (rvdev->vdev->buf) {
 		metal_free_memory(rvdev->vdev->buf);
 		rvdev->vdev->buf = NULL;
 	}
-#else /*NK_SOCKETS*/
-		rvdev->rvq = 0;
-		rvdev->svq = 0;
-#endif /*NK_SOCKETS*/
 
 		metal_mutex_deinit(&rdev->lock);
 	}
