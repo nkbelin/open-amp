@@ -14,6 +14,9 @@
 #include <metal/utilities.h>
 #include <openamp/rpmsg_virtio.h>
 #include <openamp/virtqueue.h>
+#ifdef NK_SOCKETS
+#include <sys/socket.h>
+#endif /*NK_SOCKETS*/
 
 #include "rpmsg_internal.h"
 
