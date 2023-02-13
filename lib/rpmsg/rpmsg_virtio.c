@@ -16,6 +16,7 @@
 #include <openamp/virtqueue.h>
 #ifdef NK_SOCKETS
 #include <sys/socket.h>
+#include <linux/netlink.h>
 #endif /*NK_SOCKETS*/
 
 #include "rpmsg_internal.h"
@@ -430,6 +431,42 @@ static void *rpmsg_virtio_get_tx_payload_buffer(struct rpmsg_device *rdev,
 	return RPMSG_LOCATE_DATA(rp_hdr);
 }
 
+static int netlink_write(struct virtio_device *vdev, int len)
+{
+	struct sockaddr_nl dest_addr;
+	struct msghdr msg;
+	struct iovec iov;
+	int ret;
+
+	memset(&dest_addr, 0, sizeof(dest_addr));
+	dest_addr.nl_family = AF_NETLINK;
+	dest_addr.nl_pid = 0;   /* For Linux Kernel */
+	dest_addr.nl_groups = 0; /* unicast */
+
+	vdev->nlh->nlmsg_len = NLMSG_LENGTH(len);
+	vdev->nlh->nlmsg_pid = getpid();  /* self pid */
+	vdev->nlh->nlmsg_flags = 0;
+	memset(&iov, 0, sizeof(iov));
+	iov.iov_base = (void *)vdev->nlh;
+	iov.iov_len = vdev->nlh->nlmsg_len;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_name = (void *)&dest_addr;
+	msg.msg_namelen = sizeof(dest_addr);
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	printf("write vdev->nlh->nlmsg_len is %d\n", vdev->nlh->nlmsg_len);
+	printf("write iov.iov_len is %u\n", (unsigned int)iov.iov_len);
+	ret = sendmsg(vdev->fd, &msg, 0);
+	if (ret < 0) {
+		printf("sendmsg(): %s\n", strerror(errno));
+		return ret;
+	}
+	else
+		return vdev->nlh->nlmsg_len - NLMSG_HDRLEN;
+}
+
 static int rpmsg_virtio_send_offchannel_nocopy(struct rpmsg_device *rdev,
 					       uint32_t src, uint32_t dst,
 					       const void *data, int len)
@@ -484,7 +521,8 @@ static int rpmsg_virtio_send_offchannel_nocopy(struct rpmsg_device *rdev,
 	/* Enqueue buffer on virtqueue. */
 #ifdef NK_SOCKETS
 	//actual socket write
-	write(rvdev->vdev->fd, hdr, len + sizeof(struct rpmsg_hdr));
+	//write(rvdev->vdev->fd, hdr, len + sizeof(struct rpmsg_hdr));
+	netlink_write(rvdev->vdev, len + sizeof(struct rpmsg_hdr));
 	//nk let the other side know?
 	rpmsg_virtio_notify(rvdev);
 #else /*NK_SOCKETS*/
@@ -603,6 +641,33 @@ static void rpmsg_virtio_tx_callback(struct virtqueue *vq)
  *
  */
 #ifdef NK_SOCKETS
+static int netlink_read(struct virtio_device *vdev)
+{
+	struct sockaddr_nl dest_addr;
+	struct msghdr msg;
+	struct iovec iov;
+	int ret;
+
+	iov.iov_base = (void *)vdev->nlh;
+	iov.iov_len = vdev->nl_max_size;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_name = (void *)&dest_addr;
+	msg.msg_namelen = sizeof(dest_addr);
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	printf("Listen for message...\n");
+	ret = recvmsg(vdev->fd, &msg, MSG_DONTWAIT);
+	if (ret < 0)
+		return ret;
+
+	printf("vdev->nlh->nlmsg_len is %d\n", vdev->nlh->nlmsg_len);
+	printf("iov.iov_len is %u\n", (unsigned int)iov.iov_len);
+	printf("assuming the real message size is %d\n", vdev->nlh->nlmsg_len - NLMSG_HDRLEN);
+	return vdev->nlh->nlmsg_len - NLMSG_HDRLEN;
+}
+
 void rpmsg_virtio_rx_callback(struct virtio_device *vdev)
 {
 #else /*NK_SOCKETS*/
@@ -623,32 +688,11 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 	/* Process the received data from remote node */
 
 #ifdef NK_SOCKETS
-	fd_set         input;
-	FD_ZERO(&input);
-	FD_SET(vdev->fd, &input);
-	struct timeval timeout;
-	timeout.tv_sec  = 0;
-	timeout.tv_usec = 1 * 100;
-	int n = select(vdev->fd + 1, &input, NULL, NULL, &timeout);
-	
 	idx = 0; //always first buffer
 	rp_hdr = NULL;
-	if (n == -1) {
-		//something wrong
-		printf("something went wrong!\n");
-	} else if (n == 0) {
-		//timeout
-		//printf("nothing to read\n");
-	} else {
-		if (!FD_ISSET(vdev->fd, &input)) {
-			printf("something went wrong 2!\n");
-		}
-		else {
-			len = read(vdev->fd, vdev->buf, vdev->len);
-			//printf("read data %u max was %u\n", len, vdev->len);
-			if( len )
-				rp_hdr = (struct rpmsg_hdr *)vdev->buf;
-		}
+	len = netlink_read(vdev);
+	if (len > 0) {
+		rp_hdr = (struct rpmsg_hdr *)vdev->buf;
 	}
 #else /*NK_SOCKETS*/
 	rp_hdr = rpmsg_virtio_get_rx_buffer(rvdev, &len, &idx);
@@ -683,28 +727,11 @@ static void rpmsg_virtio_rx_callback(struct virtqueue *vq)
 
 #ifdef NK_SOCKETS
 		rp_hdr = NULL;
-		FD_ZERO(&input);
-		FD_SET(vdev->fd, &input);
-		timeout.tv_sec  = 0;
-		timeout.tv_usec = 1 * 100;
-		n = select(vdev->fd + 1, &input, NULL, NULL, &timeout);
-		if (n == -1) {
-			//something wrong
-			printf("something went wrong!\n");
-		} else if (n == 0) {
-			//timeout
-			//printf("nothing to read\n");
-		} else {
-			if (!FD_ISSET(vdev->fd, &input)) {
-				printf("something went wrong 2!\n");
-			}
-			else {
-				len = read(vdev->fd, vdev->buf, vdev->len);
-				//printf("read data %u max was %u\n", len, vdev->len);
-				if( len )
-					rp_hdr = (struct rpmsg_hdr *)vdev->buf;
-			}
+		len = netlink_read(vdev);
+		if (len > 0) {
+			rp_hdr = (struct rpmsg_hdr *)vdev->buf;
 		}
+
 		if (!rp_hdr) {
 			/* tell peer we return some rx buffer */
 			rpmsg_virtio_notify(rvdev);
@@ -897,11 +924,15 @@ int rpmsg_init_vdev_with_config(struct rpmsg_virtio_device *rvdev,
 		 * shared buffers. Create shared memory pool to handle buffers.
 		 */
 #ifdef NK_SOCKETS
-		vdev->buf = metal_allocate_memory(config->h2r_buf_size);
+		vdev->nlh = (struct nlmsghdr *)metal_allocate_memory(NLMSG_SPACE(config->h2r_buf_size));
+		/* Fill the netlink message header */
+		vdev->nlh->nlmsg_len = NLMSG_SPACE(config->h2r_buf_size);
+		vdev->nl_max_size = NLMSG_SPACE(config->h2r_buf_size);
+		vdev->buf = NLMSG_DATA(vdev->nlh);
 		vdev->payload = RPMSG_LOCATE_DATA(vdev->buf);
 		vdev->len = config->h2r_buf_size;
 		vdev->rx_callback = rpmsg_virtio_rx_callback;
-		if (!vdev->buf) {
+		if (!vdev->nlh) {
 			return RPMSG_ERR_NO_BUFF;
 		}
 #else /*NK_SOCKETS*/
@@ -924,11 +955,15 @@ int rpmsg_init_vdev_with_config(struct rpmsg_virtio_device *rvdev,
 #ifndef VIRTIO_DRIVER_ONLY
 #ifdef NK_SOCKETS
 	if (role == RPMSG_REMOTE) {
-		vdev->buf = metal_allocate_memory(config->r2h_buf_size);
+		vdev->nlh = (struct nlmsghdr *)metal_allocate_memory(NLMSG_SPACE(config->r2h_buf_size));
+		/* Fill the netlink message header */
+		vdev->nlh->nlmsg_len = NLMSG_SPACE(config->r2h_buf_size);
+		vdev->nl_max_size = NLMSG_SPACE(config->r2h_buf_size);
+		vdev->buf = NLMSG_DATA(vdev->nlh);
 		vdev->payload = RPMSG_LOCATE_DATA(vdev->buf);
 		vdev->len = config->r2h_buf_size;
 		vdev->rx_callback = rpmsg_virtio_rx_callback;
-		if (!vdev->buf) {
+		if (!vdev->nlh) {
 			return RPMSG_ERR_NO_BUFF;
 		}
 	}
@@ -1040,8 +1075,8 @@ void rpmsg_deinit_vdev(struct rpmsg_virtio_device *rvdev)
 
 #ifdef NK_SOCKETS
 	if (rvdev->vdev->buf) {
-		metal_free_memory(rvdev->vdev->buf);
-		rvdev->vdev->buf = NULL;
+		metal_free_memory(rvdev->vdev->nlh);
+		rvdev->vdev->nlh = NULL;
 	}
 #else /*NK_SOCKETS*/
 		rvdev->rvq = 0;

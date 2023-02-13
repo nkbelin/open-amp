@@ -129,6 +129,8 @@ struct virtio_device {
 	void *priv; /**< TODO: remove pointer to virtio_device private data */
 #ifdef NK_SOCKETS
 	int fd; /* socket file descriptor */
+	struct nlmsghdr *nlh; /* netlink header*/
+	int nl_max_size; /* max buffer size including the nl header*/
 	void *buf; /* internal buffer used with the sockets */
 	void *payload; /* pointor on the actual payload of the internal buffer */
 	int len; /* length of the internal buffer */

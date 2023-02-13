@@ -18,89 +18,44 @@
 
 #ifdef NK_SOCKETS
 
-/* Big copy paste of the functions found in the linuc platform info */
+/* Netlink variant for the user side only */
 
 #include <sys/socket.h>
-#include <sys/un.h>
-#define UNIX_PREFIX "unix:"
-#define UNIXS_PREFIX "unixs:"
+#include <linux/netlink.h>
 
+#define NETLINK_TEST 17
 
-static int sk_unix_client(const char *descr)
+static int create_userspace_netlink_socket()
 {
-	struct sockaddr_un addr;
-	int fd;
-
-	fd = socket(AF_UNIX, SOCK_STREAM, 0);
-
-	memset(&addr, 0, sizeof addr);
-	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, descr + strlen(UNIX_PREFIX),
-		sizeof addr.sun_path);
-	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) >= 0) {
-		printf("connected to %s\r\n", descr + strlen(UNIX_PREFIX));
-		return fd;
+	struct sockaddr_nl src_addr;
+	int sock_fd;
+	sock_fd = socket(PF_NETLINK, SOCK_RAW, NETLINK_TEST);
+	if (sock_fd < 0) {
+		printf("socket(): %s\n", strerror(errno));
+		return -1;
 	}
 
-	close(fd);
-	return -1;
+	memset(&src_addr, 0, sizeof(src_addr));
+	src_addr.nl_family = AF_NETLINK;
+	src_addr.nl_pid = getpid();  /* self pid */
+	src_addr.nl_groups = 0;  /* not in mcast groups */
+	bind(sock_fd, (struct sockaddr*)&src_addr, sizeof(src_addr));
+
+	return sock_fd;
 }
 
-static int sk_unix_server(const char *descr)
-{
-	struct sockaddr_un addr;
-	int fd, nfd;
-
-	fd = socket(AF_UNIX, SOCK_STREAM, 0);
-
-	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, descr + strlen(UNIXS_PREFIX),
-		sizeof addr.sun_path);
-	unlink(addr.sun_path);
-	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-		goto fail;
-	}
-
-	listen(fd, 5);
-	printf("Waiting for connection on %s\r\n", addr.sun_path);
-	nfd = accept(fd, NULL, NULL);
-	close(fd);
-	return nfd;
-fail:
-	close(fd);
-	return -1;
-}
-
-static inline int is_sk_unix_server(const char *descr)
-{
-	if (memcmp(UNIXS_PREFIX, descr, strlen(UNIXS_PREFIX)))
-		return 0;
-	else
-		return 1;
-}
-
-static int event_open(const char *descr)
+static int event_open()
 {
 	int fd = -1;
 	int i;
 
-	if (descr == NULL) {
-		return fd;
+	/* Retry to connect a few times to give the peer a chance to setup. */
+	for (i = 0; i < 100 && fd == -1; i++) {
+		fd = create_userspace_netlink_socket();
+		if (fd == -1)
+			usleep(i * 10 * 1000);
 	}
-
-	if (!is_sk_unix_server(descr)) {
-		/* UNIX client.  Retry to connect a few times to give the peer
-		 *  a chance to setup.  */
-		for (i = 0; i < 100 && fd == -1; i++) {
-			fd = sk_unix_client(descr);
-			if (fd == -1)
-				usleep(i * 10 * 1000);
-		}
-	} else {
-		/* UNIX server. */
-		fd = sk_unix_server(descr);
-	}
-	printf("Open IPI: %s\r\n", descr);
+	printf("Open socket: %d\r\n", fd);
 	return fd;
 }
 
@@ -341,14 +296,7 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 	vdev->role = role;
 	vdev->reset_cb = rst_cb;
 	vdev->func = &remoteproc_virtio_dispatch_funcs;
-	const char *host_descr = "unixs:/tmp/openamp.nk.0";
-	const char *remote_descr = "unix:/tmp/openamp.nk.0";
-	if (role == VIRTIO_DEV_DEVICE) {
-		vdev->fd = event_open(remote_descr);
-	}
-	if (role == VIRTIO_DEV_DRIVER) {
-		vdev->fd = event_open(host_descr);
-	}
+	vdev->fd = event_open();
 
 #ifndef VIRTIO_DEVICE_ONLY
 	if (role == VIRTIO_DEV_DRIVER) {
